@@ -1,0 +1,363 @@
+//this is for mail server
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+using System.Threading;
+using System.Data.OleDb;
+
+namespace MailServer
+{
+    public partial class frmServer : Form
+    {
+
+        Dictionary<string, Socket> dicUsers = new Dictionary<string, Socket>();
+        private Thread thrListening;
+        string Strconnection = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + Environment.CurrentDirectory + "\\data.accdb";
+
+        public frmServer()
+        {
+            InitializeComponent();
+            frmServer.CheckForIllegalCrossThreadCalls = false;
+        }
+
+        void Listening()
+        {
+            TcpListener TCPListen = new TcpListener(IPAddress.Any, 7777);
+            do
+            {
+                TCPListen.Start();
+                Socket sckClient = TCPListen.AcceptSocket();
+                NetworkStream NS = new NetworkStream(sckClient);
+                BinaryReader reader = new BinaryReader(NS);
+                BinaryWriter writer = new BinaryWriter(NS);
+
+                string response = reader.ReadString();
+                if (response == "?Login")
+                {
+                    string username = Authentication(sckClient);
+                    if (username != "")
+                    {
+                        Thread thrRW = new Thread(Reading);
+                        thrRW.Start(username);
+                        thrRW.IsBackground = true;
+                    }
+                    else
+                        sckClient.Close();
+                }
+                else if (response == "?Register")
+                {
+                    string user = reader.ReadString();
+                    string pass = reader.ReadString();
+                    Register(user, pass, sckClient);
+                }
+
+                else
+                    ;
+            }
+            while(true);
+        }
+
+        string Authentication(Socket sckClient)
+        {
+            NetworkStream NS = new NetworkStream(sckClient);
+            BinaryReader reader = new BinaryReader(NS);
+            BinaryWriter writer = new BinaryWriter(NS);
+            string username, password;
+            username = reader.ReadString();
+            password = reader.ReadString();
+            string lu = Lookup(username, password);
+            if (lu == "+Auth")
+            {
+                lsbUsers.Items.Add(username);
+                dicUsers.Add(username, sckClient);
+                writer.Write("+Auth");
+                return username;
+            }
+            else
+            {
+                writer.Write("-NoAuth");
+                //reader.Close();
+                //writer.Close();
+                //sckClient.Close();
+                return "";
+            }
+        }
+
+        string Lookup(string username, string password)
+        {
+            OleDbConnection conn = new OleDbConnection(Strconnection);
+            OleDbDataReader rdr;
+            OleDbCommand cmd = new OleDbCommand("select uusername,upassword from tblUser", conn);
+            conn.Open();
+            rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                if ((rdr["uusername"].ToString() == username) && (rdr["upassword"].ToString() == password))
+                {
+                    return "+Auth";
+                }
+            }
+            rdr.Close();
+            conn.Close();
+
+            return "-NoAuth";
+        }
+
+        void Reading(object username)
+        {
+            Socket sck = dicUsers[username.ToString()];
+            NetworkStream NS = new NetworkStream(sck);
+            BinaryReader reader = new BinaryReader(NS);
+            BinaryWriter writer = new BinaryWriter(NS);
+            do
+            {
+                string command = reader.ReadString();
+                try
+                {
+                    if (command == "?Send")
+                    {
+                        try
+                        {
+                            string from = reader.ReadString();
+                            string to = reader.ReadString();
+                            string subject = reader.ReadString();
+                            string body = reader.ReadString();
+                            OleDbConnection conn2 = new OleDbConnection(Strconnection);
+                            OleDbCommand cmd2 = new OleDbCommand("insert into tblEmail (eFrom,eTo,eSubject,eBody,eDraft) values ('" + from + "','" + to + "','" + subject + "','" + body + "',no)", conn2);
+                            conn2.Open();
+                            cmd2.ExecuteNonQuery();
+                            conn2.Close();
+                            writer.Write("+Send");
+                            FillData();
+                        }
+                        catch
+                        {
+                            writer.Write("-Send");
+                        }
+                    }
+                    else if (command == "?SendDraft")
+                    {
+                        try
+                        {
+                            string SendDraftEmailID = reader.ReadString();
+                            OleDbConnection conn2 = new OleDbConnection(Strconnection);
+                            OleDbCommand cmd2 = new OleDbCommand("update tblEmail set eDraft=no where EmailID = " + SendDraftEmailID  , conn2);
+                            conn2.Open();
+                            cmd2.ExecuteNonQuery();
+                            conn2.Close();
+                            writer.Write("+SendDraft");
+                            FillData();
+                        }
+                        catch
+                        {
+                            writer.Write("-SendDraft");
+                        }
+                    }
+                    else if (command == "?Signout")
+                    {
+                        string user = reader.ReadString();
+                        lsbUsers.Items.Remove(user);
+                        dicUsers.Remove(user);
+                        sck.Close();
+                    }
+                    else if (command == "?Receive")
+                    {
+                        string user = reader.ReadString();
+                        OleDbConnection conn = new OleDbConnection(Strconnection);
+                        OleDbDataAdapter da = new OleDbDataAdapter("select EmailID,eFrom,eSubject,eBody from tblEmail where eTo = '" + user + "' and eDraft = no", conn);
+                        DataTable dt = new DataTable();
+                        conn.Open();
+                        da.Fill(dt);
+                        conn.Close();
+                        writer.Write(dt.Rows.Count.ToString());
+                        for (int i = 0; i < dt.Rows.Count; i++)
+                        {
+                            writer.Write(dt.Rows[i]["EmailID"].ToString());
+                            writer.Write(dt.Rows[i]["eFrom"].ToString());
+                            writer.Write(dt.Rows[i]["eSubject"].ToString());
+                            writer.Write(dt.Rows[i]["eBody"].ToString());
+                        }
+                    }
+                    else if (command == "?Draft")
+                    {
+                        string user = reader.ReadString();
+                        OleDbConnection conn = new OleDbConnection(Strconnection);
+                        OleDbDataAdapter da = new OleDbDataAdapter("select EmailID,eTo,eSubject,eBody from tblEmail where eFrom = '" + user + "' and eDraft = yes", conn);
+                        DataTable dt = new DataTable();
+                        conn.Open();
+                        da.Fill(dt);
+                        conn.Close();
+                        writer.Write(dt.Rows.Count.ToString());
+                        for (int i = 0; i < dt.Rows.Count; i++)
+                        {
+                            writer.Write(dt.Rows[i]["EmailID"].ToString());
+                            writer.Write(dt.Rows[i]["eTo"].ToString());
+                            writer.Write(dt.Rows[i]["eSubject"].ToString());
+                            writer.Write(dt.Rows[i]["eBody"].ToString());
+                        }
+                    }
+                    else if (command == "?Delete")
+                    {
+                        string EmailID = reader.ReadString();
+                        OleDbConnection conn = new OleDbConnection(Strconnection);
+                        OleDbCommand cmd = new OleDbCommand("delete from  tblEmail where EmailID = " + EmailID, conn);
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                        conn.Close();
+                    }
+                    else
+                        ;
+
+                    command = "";
+                }
+                catch (Exception e1)
+                {
+                    sck.Close();
+                    break;
+                }
+            }
+            while (sck.Connected);
+        }
+
+        void Register(string user, string pass, Socket sck)
+        {
+            NetworkStream NS = new NetworkStream(sck);
+            BinaryWriter writer = new BinaryWriter(NS);
+            bool chk = false;
+
+            OleDbConnection conn = new OleDbConnection(Strconnection);
+            OleDbDataReader rdr;
+            OleDbCommand cmd = new OleDbCommand("select uusername from tblUser", conn);
+            conn.Open();
+            rdr = cmd.ExecuteReader();
+            while(rdr.Read())
+            {
+                if(rdr["uusername"].ToString() == user)
+                {
+                    chk = true;
+                    break;
+                }
+            }
+            rdr.Close();
+            conn.Close();
+
+            if (chk == false)
+            {
+                OleDbConnection conn2 = new OleDbConnection(Strconnection);
+                OleDbCommand cmd2 = new OleDbCommand("insert into tblUser (uusername,upassword) values ('" + user + "','" + pass + "')", conn2);
+                conn2.Open();
+                cmd2.ExecuteNonQuery();
+                conn2.Close();
+                writer.Write("+Register");
+            }
+            else
+            {
+                writer.Write("-NoRegister");
+            }
+        }
+
+        void FillData()
+        {
+            OleDbConnection conn = new OleDbConnection(Strconnection);
+            OleDbDataAdapter da = new OleDbDataAdapter("select * from tblEmail", conn);
+            DataTable dt = new DataTable();
+            conn.Open();
+            da.Fill(dt);
+            dgvEMails.DataSource = dt;
+            conn.Close();
+        }
+
+        void FillRegisteredUsers()
+        {
+            lsbRegisteredUsers.Items.Clear();
+
+            OleDbConnection conn = new OleDbConnection(Strconnection);
+            OleDbDataReader rdr;
+            OleDbCommand cmd = new OleDbCommand("select uusername from tblUser", conn);
+            conn.Open();
+            rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                lsbRegisteredUsers.Items.Add(rdr["uusername"].ToString());
+            }
+            rdr.Close();
+            conn.Close();
+        }
+
+        private void frmServer_Load(object sender, EventArgs e)
+        {
+            thrListening = new Thread(new ThreadStart(Listening));
+            thrListening.Start();
+            thrListening.IsBackground = true;
+
+            FillData();
+            FillRegisteredUsers();
+        }
+
+        private void dgvEMails_Click(object sender, EventArgs e)
+        {
+            frmShowEmails f = new frmShowEmails();
+            f.txtTo.Text = dgvEMails["To", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.txtFrom.Text = dgvEMails["From", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.txtSubject.Text = dgvEMails["Subject", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.txtBody.Text = dgvEMails["Body", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.ShowDialog();
+        }
+
+        private void btnUserRefresh_Click(object sender, EventArgs e)
+        {
+            FillRegisteredUsers();
+        }
+
+        private void btnUserDelete_Click(object sender, EventArgs e)
+        {
+            DialogResult dr = MessageBox.Show("Are you sure?", "Warning", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (dr == DialogResult.Yes)
+            {
+                try
+                {
+                    OleDbConnection conn = new OleDbConnection(Strconnection);
+                    OleDbCommand cmd = new OleDbCommand("delete from tblUser where uusername = '" + lsbRegisteredUsers.SelectedItem.ToString() + "'", conn);
+                    conn.Open();
+                    cmd.ExecuteNonQuery();
+                    conn.Close();
+
+                    FillRegisteredUsers();
+                }
+                catch (Exception e1)
+                {
+                    MessageBox.Show(e1.Message);
+                }
+            }
+        }
+
+        private void lsbUsers_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void tabPage1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void dgvEMails_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+
+        }
+
+        private void label1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+    }
+}
