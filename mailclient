@@ -1,0 +1,370 @@
+//this is for main form
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+using System.Threading;
+using System.Data.OleDb;
+
+namespace MailClient
+{
+    public partial class frmMain : Form
+    {
+        private Thread ClientThread;
+        public TcpClient TcpConnection;
+        public BinaryReader reader;
+        public BinaryWriter writer;
+        public string username;
+        bool SendDraft = false;
+        int SendDraftEmailID = 0;
+
+        public frmMain()
+        {
+            InitializeComponent();
+            frmMain.CheckForIllegalCrossThreadCalls = false;
+        }
+
+        private void frmMain_Load(object sender, EventArgs e)
+        {
+            this.Text = username;
+            writer.Write("?Receive");
+            writer.Write(username);
+            string c = reader.ReadString();
+            int count = int.Parse(c);
+            for (int i = 0; i < count; i++)
+            {
+                object[] s = new object[] {reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString() };
+                dgvEMails.Rows.Add(s);
+            }
+
+
+            this.Text = username;
+            writer.Write("?Draft");
+            writer.Write(username);
+            c = reader.ReadString();
+            count = int.Parse(c);
+            dgvDraft.Rows.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                object[] s = new object[] { reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString() };
+                dgvDraft.Rows.Add(s);
+            }
+        }
+
+        private void btnSend_Click(object sender, EventArgs e)
+        {
+            if (SendDraft == false)
+            {
+                writer.Write("?Send");
+                writer.Write(username);
+                writer.Write(txtTo.Text);
+                writer.Write(txtSubject.Text);
+                writer.Write(txtBody.Text);
+                string response = reader.ReadString();
+                if (response == "+Send")
+                    MessageBox.Show("The message has been sent successfully!", "Message", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else if (response == "-Send")
+                    MessageBox.Show("Attempting has been failed!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Information);
+              
+                   
+            }
+            else
+            {
+                SendDraft = true;
+                writer.Write("?SendDraft");
+                writer.Write(SendDraftEmailID.ToString());
+                string response = reader.ReadString();
+                if (response == "+SendDraft")
+                    MessageBox.Show("The message has been sent successfully!", "Message", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else if (response == "-SendDraft")
+                    MessageBox.Show("Attempting has been failed!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Information);
+               
+                    
+            }
+
+        }
+
+        private void btnDraft_Click(object sender, EventArgs e)
+        {
+            writer.Write("?Send");
+            writer.Write(username);
+            writer.Write(txtTo.Text);
+            writer.Write(txtSubject.Text);
+            writer.Write(txtBody.Text);
+            writer.Write("yes");
+            string response = reader.ReadString();
+            if (response == "+Send")
+                MessageBox.Show("The message has been sent successfully!", "Message", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            else if (response == "-Send")
+                MessageBox.Show("Attempting has been failed!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Information);
+           
+        }
+
+        private void frmMain_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            DialogResult dr = MessageBox.Show("You are singing out", "Warning!", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (dr == DialogResult.Yes)
+            {
+                writer.Write("?Signout");
+                writer.Write(username);
+                //writer.Close();
+                //reader.Close();
+                //TcpConnection.Close();
+            }
+            else
+                e.Cancel = true;
+        }
+
+        private void btnSignout_Click(object sender, EventArgs e)
+        {
+            Application.Exit();
+        }
+
+        private void btnRefresh_Click(object sender, EventArgs e)
+        {
+            this.Text = username;
+            writer.Write("?Receive");
+            writer.Write(username);
+            string c = reader.ReadString();
+            int count = int.Parse(c);
+            dgvEMails.Rows.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                object[] s = new object[] { reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString() };
+                dgvEMails.Rows.Add(s);
+            }
+                        
+            this.Text = username;
+            writer.Write("?Draft");
+            writer.Write(username);
+            c = reader.ReadString();
+            count = int.Parse(c);
+            dgvDraft.Rows.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                object[] s = new object[] { reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString() };
+                dgvDraft.Rows.Add(s);
+            }
+        }
+
+        private void tabControl1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (tabControl.SelectedTab == tabCompose)
+            {
+                btnRefresh.Enabled = false;
+                btnDelete.Enabled = false;
+            }
+            else if (tabControl.SelectedTab == tabInbox)
+            {
+                btnRefresh.Enabled = true;
+                btnDelete.Enabled = true;
+            }
+        }
+
+        private void btnDelete_Click(object sender, EventArgs e)
+        {
+            writer.Write("?Delete");
+            writer.Write(dgvEMails["EmailID",dgvEMails.CurrentRow.Index].Value.ToString());
+            
+            btnRefresh_Click(null, null);
+        }
+
+        private void dgvEMails_DoubleClick(object sender, EventArgs e)
+        {
+            frmShowEmail f = new frmShowEmail();
+            f.txtFrom.Text = dgvEMails["From", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.txtSubject.Text = dgvEMails["Subject", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.txtBody.Text = dgvEMails["Body", dgvEMails.CurrentRow.Index].Value.ToString();
+            f.ShowDialog();
+        }
+
+        private void dgvDraft_DoubleClick(object sender, EventArgs e)
+        {
+            txtTo.Text = dgvDraft["DrafteTo", dgvDraft.CurrentRow.Index].Value.ToString();
+            txtSubject.Text = dgvDraft["DrafteSubject", dgvDraft.CurrentRow.Index].Value.ToString();
+            txtBody.Text = dgvDraft["DrafteBody", dgvDraft.CurrentRow.Index].Value.ToString();
+            SendDraftEmailID = int.Parse(dgvDraft["DraftEmailID", dgvDraft.CurrentRow.Index].Value.ToString());
+            SendDraft = true;
+
+            tabControl.SelectTab("tabCompose");
+        }
+
+        private void dgvEMails_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+
+        }
+
+        private void tabCompose_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Draft_Click(object sender, EventArgs e)
+        {
+
+        }
+
+      
+        
+
+
+    }
+}
+//this is for login form
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Net;
+using System.Net.Sockets;
+using System.IO;
+using System.Threading;
+
+namespace MailClient
+{
+    public partial class frmLogin : Form
+    {
+
+        TcpClient TcpConnection;
+        TcpClient TcpConnectionRegister;
+        private BinaryReader reader;
+        private BinaryWriter writer;
+        private NetworkStream NS;
+       
+        private Thread thrConnection;
+
+        public frmLogin()
+        {
+            InitializeComponent();
+            frmLogin.CheckForIllegalCrossThreadCalls = false;
+        }
+
+        void Connection()
+        {
+            Initializing();
+            if (Authentication())
+            {
+                frmMain f = new frmMain();
+                f.TcpConnection = TcpConnection;
+                f.writer = writer;
+                f.reader = reader;
+                f.username = txtLoginUsername.Text;
+                f.Text = txtLoginUsername.Text;
+                this.Hide();
+                f.ShowDialog();
+                this.Close();
+
+                writer.Close();
+                reader.Close();
+                NS.Close();
+                TcpConnection.Close();
+            }
+            else
+            {
+                MessageBox.Show("username or password is wrong!", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                writer.Close();
+                reader.Close();
+                NS.Close();
+                TcpConnection.Close();
+            }
+        }
+
+        bool Authentication()
+        {
+            writer.Write("?Login");
+            writer.Write(txtLoginUsername.Text);
+            writer.Write(txtLoginPassword.Text);
+            string response = reader.ReadString();
+            if (response == "+Auth")
+                return true;
+            else if (response == "-NoAuth")
+                return false;
+            else
+                return false;
+        }
+
+
+        void Initializing()
+        {
+            try
+            {
+                do
+                {
+                    TcpConnection = new TcpClient();
+                    TcpConnection.Connect("localhost", 7777);
+                    NS = TcpConnection.GetStream();
+                    writer = new BinaryWriter(NS);
+                    reader = new BinaryReader(NS);
+                }
+                while (TcpConnection.Connected != true);
+            }
+
+            catch (Exception e1)
+            {
+                MessageBox.Show(e1.Message);
+            }
+        }
+
+        private void btnLogin_Click(object sender, EventArgs e)
+        {
+            thrConnection = new Thread(Connection);
+            thrConnection.Start();
+            thrConnection.IsBackground = true;
+        }
+
+        private void btnRegister_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                TcpConnectionRegister = new TcpClient();
+                TcpConnectionRegister.Connect("localhost", 7777);
+                NS = TcpConnectionRegister.GetStream();
+                writer = new BinaryWriter(NS);
+                reader = new BinaryReader(NS);
+                writer.Write("?Register");
+                writer.Write(txtRegisterUsername.Text);
+                writer.Write(txtRegisterPassword.Text);
+                string response = reader.ReadString();
+                if (response == "+Register")
+                    MessageBox.Show("The user has been added successfully!", "Message", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else if (response == "-NoRegister")
+                    MessageBox.Show("This username has been given by another user!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Stop);
+
+                writer.Close();
+                reader.Close();
+                NS.Close();
+                TcpConnectionRegister.Close();
+            }
+            catch (Exception e1)
+            {
+                MessageBox.Show(e1.Message);
+                writer.Close();
+                reader.Close();
+                NS.Close();
+                TcpConnectionRegister.Close();
+            }
+        }
+
+        private void tabPage1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void label6_Click(object sender, EventArgs e)
+        {
+
+        }
+
+    }
+}
